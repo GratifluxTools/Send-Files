@@ -34,26 +34,47 @@ func main() {
 	http.HandleFunc("/delete/", basicAuth(handleDelete))
 
 	port := "8080"
-	ip := getLocalIP()
-	fmt.Printf("Server started at http://%s:%s\n", ip, port)
-	fmt.Printf("Access from other devices using the same Wi-Fi/Hotspot.\n")
+	ips := getLocalIPs()
+	fmt.Println("--------------------------------------------------")
+	fmt.Println("Server is running!")
+	fmt.Println("Please try accessing one of the following URLs:")
+	for _, ip := range ips {
+		fmt.Printf("  http://%s:%s\n", ip, port)
+	}
+	fmt.Println("--------------------------------------------------")
+	fmt.Println("Note: Ensure your device (iPad, etc.) is connected")
+	fmt.Println("to this PC's Mobile Hotspot.")
+	fmt.Println("If it doesn't work, check Windows Firewall settings.")
+	fmt.Println("--------------------------------------------------")
 
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	// Listen on all interfaces
+	server := &http.Server{Addr: "0.0.0.0:" + port}
+	log.Fatal(server.ListenAndServe())
 }
 
-func getLocalIP() string {
+func getLocalIPs() []string {
+	var ips []string
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return "localhost"
+		return []string{"localhost"}
 	}
 	for _, address := range addrs {
 		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
+				ipStr := ipnet.IP.String()
+				// Windows Hotspot often uses 192.168.137.1
+				if strings.HasPrefix(ipStr, "192.168.137.") {
+					ips = append([]string{ipStr}, ips...) // Put hotspot IP at the front
+				} else {
+					ips = append(ips, ipStr)
+				}
 			}
 		}
 	}
-	return "localhost"
+	if len(ips) == 0 {
+		return []string{"localhost"}
+	}
+	return ips
 }
 
 func basicAuth(next http.HandlerFunc) http.HandlerFunc {
