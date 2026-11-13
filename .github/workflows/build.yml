@@ -1,0 +1,81 @@
+name: Build
+
+# 手動実行、または Release が公開された時のみ動く
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            goos: windows
+            exe: send-files.exe
+            artifact: send-files-windows
+          - os: ubuntu-latest
+            goos: linux
+            exe: send-files
+            artifact: send-files-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: バージョンを埋め込む（Release 時はタグから）
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          sed -i -E "s/^const appVersion = .*/const appVersion = \"$VERSION\"/" app_version.go
+          cat app_version.go
+
+      - name: テスト
+        shell: bash
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: ビルド
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p "build/${{ matrix.goos }}"
+          go build -trimpath -ldflags "-s -w" -o "build/${{ matrix.goos }}/${{ matrix.exe }}" .
+          cp README.md "build/${{ matrix.goos }}/"
+
+      - name: パッケージ化（Windows）
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path "build/windows/*" -DestinationPath "${{ matrix.artifact }}.zip"
+
+      - name: パッケージ化（Linux）
+        if: matrix.goos == 'linux'
+        run: cd build/linux && zip -r "$GITHUB_WORKSPACE/${{ matrix.artifact }}.zip" .
+
+      - name: Actions の成果物として保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+      - name: Release に添付（Release 公開時のみ）
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ matrix.artifact }}.zip
